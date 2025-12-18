@@ -1,24 +1,34 @@
-import { ConnectButton, useCurrentAccount, useSignAndExecuteTransaction, useSuiClient } from '@mysten/dapp-kit';
+import React, { useState } from 'react';
+import {
+  ConnectButton,
+  useCurrentAccount,
+  useSignAndExecuteTransaction,
+  useSuiClient,
+} from '@mysten/dapp-kit';
 import { Transaction } from '@mysten/sui/transactions';
-import { Wallet, Sparkles, Trophy, Coins, LogOut } from 'lucide-react';
-import { toast } from 'sonner';
-import { useSuiBalance } from './hooks/useSuiBalance';
-import type { SuiEvent } from '@mysten/sui/client';
-import { useEffect, useState } from 'react';
+import { useGGCBalance } from './hooks/useGGCBalance';
 
 // Move module configuration
-const PACKAGE_ID = '0x8ca87bbc53db9ddd044c3e0b622bb1c86a04fd4d528ac278673996ad8dea904c';
-const MODULE_NAME = 'rps';
-const HOUSE_OBJECT_ID = '0xf16da9961209675d42cdba104d3a7f3ce0ff87f6615b71ecdec097e66b763fa1';
-const BET_AMOUNT_SUI = 0.1;
-const BET_AMOUNT_MIST = BET_AMOUNT_SUI * 1_000_000_000;
+const TREASURY_CAP_ID =
+  '0x92b8d0bdd87b2aefecb694dae9e621bf79a176be286294ae1b297f4ec4343b33';
+const PACKAGE_ID =
+  '0x4d21dfddf16121831decde8457856f41060d7ec43ee2d6bd2778703535d5e063';
+const MODULE_NAME = 'ggc';
+const HOUSE_OBJECT_ID =
+  '0x2e22048c933eb925e9ab03159f34ebd95160eb3634f7f8602937300caa920185';
 
-type Choice = 'rock' | 'paper' | 'scissors' | null;
+type Choice = 'rock' | 'paper' | 'scissors';
+type GameResult = 'win' | 'lose' | 'draw' | null;
 
-export default function GamePage() {
-  const account = useCurrentAccount()!;
+const CHOICES = {
+  rock: '👊',
+  paper: '✋',
+  scissors: '✌️',
+};
+
+export default function RockPaperScissorsGame() {
+  const account = useCurrentAccount();
   const client = useSuiClient();
-  const { data: balance, refetch: balanceRefetch } = useSuiBalance();
   const { mutate: signAndExecute } = useSignAndExecuteTransaction({
     execute: async ({ bytes, signature }) =>
       await client.executeTransactionBlock({
@@ -31,77 +41,51 @@ export default function GamePage() {
         },
       }),
   });
+  const { data: balance, refetch: refetchBalance } = useGGCBalance();
 
-  const [houseBalance, setHouseBalance] = useState<number>(0);
-  const [playerChoice, setPlayerChoice] = useState<Choice>(null);
-  const [houseChoice, setHouseChoice] = useState<Choice>(null);
-  const [gameStatus, setGameStatus] = useState<'idle' | 'betting' | 'revealing' | 'result'>('idle');
-  const [result, setResult] = useState<'win' | 'lose' | 'draw' | null>(null);
+  const [playerChoice, setPlayerChoice] = useState<Choice | null>(null);
+  const [botChoice, setBotChoice] = useState<Choice | null>(null);
+  const [result, setResult] = useState<GameResult>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [showModal, setShowModal] = useState(false);
+  const [scores, setScores] = useState({ player: 0, bot: 0, draws: 0 });
 
-  useEffect(() => {
-    getHouseBalance();
-  }, []);
+  const getRandomChoice = (): Choice => {
+    const choices: Choice[] = ['rock', 'paper', 'scissors'];
+    return choices[Math.floor(Math.random() * choices.length)];
+  };
 
-  const hasEnoughBalance = balance ? +balance >= BET_AMOUNT_SUI : false;
-
-  const choices: { value: Choice; icon: string; label: string; color: string }[] = [
-    { value: 'rock', icon: '✊', label: 'Búa', color: 'bg-red-500 hover:bg-red-600' },
-    { value: 'paper', icon: '✋', label: 'Bao', color: 'bg-blue-500 hover:bg-blue-600' },
-    { value: 'scissors', icon: '✌️', label: 'Kéo', color: 'bg-green-500 hover:bg-green-600' },
-  ];
-
-  function getRandomChoice(): Choice {
-    const options: Choice[] = ['rock', 'paper', 'scissors'];
-    return options[Math.floor(Math.random() * 3)];
-  }
-
-  function determineWinner(player: Choice, house: Choice): 'win' | 'lose' | 'draw' {
-    if (player === house) return 'draw';
+  const determineWinner = (player: Choice, bot: Choice): GameResult => {
+    if (player === bot) return 'draw';
     if (
-      (player === 'rock' && house === 'scissors') ||
-      (player === 'paper' && house === 'rock') ||
-      (player === 'scissors' && house === 'paper')
+      (player === 'rock' && bot === 'scissors') ||
+      (player === 'paper' && bot === 'rock') ||
+      (player === 'scissors' && bot === 'paper')
     ) {
       return 'win';
     }
     return 'lose';
-  }
+  };
 
-  function handleChoiceSelect(choice: Choice) {
-    if (gameStatus !== 'idle' || isProcessing) return;
-    
-    setPlayerChoice(choice);
-    setGameStatus('betting');
-  }
-
-  function resetGame() {
-    setPlayerChoice(null);
-    setHouseChoice(null);
-    setGameStatus('idle');
-    setResult(null);
-  }
-
-  async function placeBet() {
-    if (!playerChoice || isProcessing) return;
+  const payAndPlay = async (choice: Choice) => {
+    if (!account) {
+      alert('Please connect your wallet first!');
+      return;
+    }
 
     setIsProcessing(true);
-    const generatedHouseChoice = getRandomChoice();
-    setHouseChoice(generatedHouseChoice);
-    
+    setPlayerChoice(choice);
+    setBotChoice(null);
+    setResult(null);
+
+    // Step 1: User pays first (payout to house)
     const tx = new Transaction();
-    const [coin] = tx.splitCoins(tx.gas, [tx.pure.u64(BET_AMOUNT_MIST)]);
-
-    // Convert choice to bool (adjust based on your contract)
-    const choiceBool = playerChoice === 'rock';
-
     tx.moveCall({
-      target: `${PACKAGE_ID}::${MODULE_NAME}::play_game`,
+      target: `${PACKAGE_ID}::${MODULE_NAME}::payout`,
       arguments: [
         tx.object(HOUSE_OBJECT_ID),
-        coin,
-        tx.pure.bool(choiceBool),
-        tx.object('0x8'),
+        tx.object(TREASURY_CAP_ID),
+        tx.pure.address(HOUSE_OBJECT_ID), // Payment goes to house first
       ],
     });
 
@@ -109,228 +93,225 @@ export default function GamePage() {
       { transaction: tx },
       {
         onSuccess: async (res) => {
-          console.log('Game completed:', res);
-          
-          setGameStatus('revealing');
-          
+          console.log('Payment successful', res);
+
+          // Step 2: After payment confirmed, run game logic
           setTimeout(() => {
-            const gameOutcome = determineWinner(playerChoice, generatedHouseChoice);
-            setResult(gameOutcome);
-            setGameStatus('result');
-            
-            if (gameOutcome === 'win') {
-              toast.success(`🎉 Bạn thắng! +${BET_AMOUNT_SUI * 2} SUI`);
-            } else if (gameOutcome === 'lose') {
-              toast.error(`😢 Bạn thua! -${BET_AMOUNT_SUI} SUI`);
-            } else {
-              toast.info('🤝 Hòa! Hoàn tiền');
+            // Simulate on-chain game logic
+            const bot = getRandomChoice();
+            setBotChoice(bot);
+
+            const gameResult = determineWinner(choice, bot);
+            setResult(gameResult);
+
+            // Update scores
+            setScores((prev) => ({
+              player: prev.player + (gameResult === 'win' ? 1 : 0),
+              bot: prev.bot + (gameResult === 'lose' ? 1 : 0),
+              draws: prev.draws + (gameResult === 'draw' ? 1 : 0),
+            }));
+
+            // Step 3: If player wins, send payout
+            if (gameResult === 'win') {
+              const payoutTx = new Transaction();
+              payoutTx.moveCall({
+                target: `${PACKAGE_ID}::${MODULE_NAME}::payout`,
+                arguments: [
+                  payoutTx.object(HOUSE_OBJECT_ID),
+                  payoutTx.object(TREASURY_CAP_ID),
+                  payoutTx.pure.address(account.address),
+                ],
+              });
+
+              signAndExecute(
+                { transaction: payoutTx },
+                {
+                  onSuccess: () => {
+                    console.log('Payout to winner successful');
+                    refetchBalance();
+                  },
+                  onError: (err) => {
+                    console.error('Payout failed', err);
+                  },
+                }
+              );
             }
-            
-            balanceRefetch();
-            getHouseBalance();
+
             setIsProcessing(false);
-          }, 2000);
+            setShowModal(true);
+            refetchBalance();
+          }, 1500); // Simulate blockchain processing time
         },
-        onError: (error) => {
-          console.error('Error:', error);
-          toast.error('Giao dịch thất bại!');
-          resetGame();
+        onError: (err) => {
+          console.error('Payment failed', err);
+          alert('Payment failed. Please try again.');
           setIsProcessing(false);
+          setPlayerChoice(null);
         },
       }
     );
-  }
+  };
 
-  async function getHouseBalance() {
-    const houseObject = await client.getObject({
-      id: HOUSE_OBJECT_ID,
-      options: { showContent: true },
-    });
+  const confirmEndRound = () => {
+    setShowModal(false);
+    setPlayerChoice(null);
+    setBotChoice(null);
+    setResult(null);
+  };
 
-    if (houseObject.data?.content?.dataType === 'moveObject') {
-      const fields = houseObject.data.content.fields as any;
-      const balance = parseInt(fields.balance || '0') / 1_000_000_000;
-      setHouseBalance(balance);
-    }
-  }
+  const getResultColor = () => {
+    if (result === 'win') return 'bg-green-500';
+    if (result === 'lose') return 'bg-red-500';
+    if (result === 'draw') return 'bg-yellow-500';
+    return 'bg-gray-500';
+  };
+
+  const getResultText = () => {
+    if (result === 'win') return 'You Win! 🎉';
+    if (result === 'lose') return 'You Lose 😢';
+    if (result === 'draw') return "It's a Draw! 🤝";
+    if (isProcessing) return 'Processing payment...';
+    return 'Rock, Paper, Scissors?';
+  };
 
   return (
-    <div className="bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 p-4 min-h-screen">
-      <div className="mx-auto max-w-4xl">
-        {/* Header */}
-        <div className="text-center mb-8 pt-6">
-          <h1 className="text-5xl font-bold text-white mb-2 flex items-center justify-center gap-3">
-            <Sparkles className="w-10 h-10 text-yellow-400" />
-            Kéo Búa Bao
-            <Sparkles className="w-10 h-10 text-yellow-400" />
-          </h1>
-          <p className="text-purple-200 text-lg">Cược {BET_AMOUNT_SUI} SUI - Thắng nhận {BET_AMOUNT_SUI * 2} SUI</p>
-        </div>
-
-        {/* Wallet & House Info */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-          <div className="bg-white/10 backdrop-blur-lg p-6 rounded-2xl border border-white/20">
-            <div className="flex items-center gap-2 mb-4">
-              <Wallet className="w-5 h-5 text-yellow-400" />
-              <h3 className="text-white font-semibold">Ví của bạn</h3>
-            </div>
-            <div className="space-y-3">
-              <div className="flex justify-between text-sm">
-                <span className="text-purple-200">Địa chỉ:</span>
-                <span className="text-white font-mono text-xs">
-                  {account.address.slice(0, 6)}...{account.address.slice(-4)}
-                </span>
+    <div className="flex justify-center items-center bg-gradient-to-br from-purple-600 to-blue-600 p-4 min-h-screen">
+      <div
+        className={`${getResultColor()} shadow-2xl rounded-2xl w-full max-w-2xl relative`}
+      >
+        {/* Game Display */}
+        <div className="mb-8 p-8 rounded-xl text-white transition-all duration-300">
+          <div className="flex flex-col gap-8">
+            {/* Bot Side */}
+            {botChoice && (
+              <div className="text-center">
+                <div className="opacity-90 mb-2 font-semibold text-sm">
+                  🤖 Bot
+                </div>
+                <div className="p-8 text-8xl animate-bounce">
+                  {CHOICES[botChoice]}
+                </div>
               </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-purple-200">Số dư:</span>
-                <span className="text-white font-bold">{balance} SUI</span>
-              </div>
-              <div className="pt-2">
-                <ConnectButton />
-              </div>
-            </div>
-          </div>
+            )}
 
-          <div className="bg-white/10 backdrop-blur-lg p-6 rounded-2xl border border-white/20">
-            <div className="flex items-center gap-2 mb-4">
-              <Coins className="w-5 h-5 text-green-400" />
-              <h3 className="text-white font-semibold">Nhà cái</h3>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-purple-200">Quỹ nhà cái:</span>
-              <span className="text-white font-bold">{houseBalance.toFixed(2)} SUI</span>
-            </div>
-          </div>
-        </div>
+            <h2 className="font-bold text-2xl text-center">
+              {getResultText()}
+            </h2>
 
-        {/* Game Arena */}
-        <div className="bg-white/10 backdrop-blur-lg p-8 rounded-3xl border border-white/20 mb-6">
-          {/* Player vs House Display */}
-          <div className="grid grid-cols-3 gap-4 mb-8">
             {/* Player Side */}
             <div className="text-center">
-              <div className="text-purple-200 text-sm mb-2">BẠN</div>
-              <div className="bg-gradient-to-br from-blue-500 to-blue-700 rounded-2xl p-8 h-40 flex items-center justify-center border-4 border-blue-300 shadow-xl">
-                {playerChoice ? (
-                  <span className="text-7xl">{choices.find(c => c.value === playerChoice)?.icon}</span>
-                ) : (
-                  <span className="text-white text-4xl">?</span>
-                )}
-              </div>
-            </div>
-
-            {/* VS */}
-            <div className="flex items-center justify-center">
-              <div className="text-yellow-400 font-bold text-3xl animate-pulse">VS</div>
-            </div>
-
-            {/* House Side */}
-            <div className="text-center">
-              <div className="text-purple-200 text-sm mb-2">NHÀ CÁI</div>
-              <div className="bg-gradient-to-br from-red-500 to-red-700 rounded-2xl p-8 h-40 flex items-center justify-center border-4 border-red-300 shadow-xl">
-                {gameStatus === 'revealing' || gameStatus === 'result' ? (
-                  <span className="text-7xl">{choices.find(c => c.value === houseChoice)?.icon}</span>
-                ) : (
-                  <span className="text-white text-4xl">?</span>
-                )}
+              <div className="opacity-90 mb-2 font-semibold text-sm">You</div>
+              <div className="p-8 text-8xl">
+                {playerChoice ? CHOICES[playerChoice] : '❓'}
               </div>
             </div>
           </div>
 
-          {/* Result Message */}
-          {gameStatus === 'result' && result && (
-            <div className={`text-center p-6 rounded-xl mb-6 ${
-              result === 'win' ? 'bg-green-500/20 border-2 border-green-400' :
-              result === 'lose' ? 'bg-red-500/20 border-2 border-red-400' :
-              'bg-yellow-500/20 border-2 border-yellow-400'
-            }`}>
-              <div className="flex items-center justify-center gap-3">
-                {result === 'win' && <Trophy className="w-8 h-8 text-yellow-400" />}
-                <span className={`text-3xl font-bold ${
-                  result === 'win' ? 'text-green-300' :
-                  result === 'lose' ? 'text-red-300' :
-                  'text-yellow-300'
-                }`}>
-                  {result === 'win' ? '🎉 BẠN THẮNG!' :
-                   result === 'lose' ? '😢 BẠN THUA!' :
-                   '🤝 HÒA!'}
-                </span>
-              </div>
-            </div>
-          )}
-
-          {/* Choice Selection */}
-          {gameStatus === 'idle' && (
-            <div>
-              <h3 className="text-white text-center mb-4 text-xl font-semibold">Chọn một:</h3>
-              <div className="grid grid-cols-3 gap-4">
-                {choices.map((choice) => (
-                  <button
-                    key={choice.value}
-                    onClick={() => handleChoiceSelect(choice.value)}
-                    disabled={!hasEnoughBalance}
-                    className={`${choice.color} text-white p-6 rounded-2xl transition-all transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed shadow-xl`}
-                  >
-                    <div className="text-6xl mb-2">{choice.icon}</div>
-                    <div className="font-bold text-lg">{choice.label}</div>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Bet Confirmation */}
-          {gameStatus === 'betting' && (
-            <div className="text-center space-y-4">
-              <p className="text-white text-xl">
-                Bạn đã chọn: <span className="font-bold text-yellow-400">{choices.find(c => c.value === playerChoice)?.label}</span>
-              </p>
-              <div className="flex gap-4 justify-center">
-                <button
-                  onClick={placeBet}
-                  disabled={isProcessing}
-                  className="bg-green-500 hover:bg-green-600 text-white px-8 py-4 rounded-xl font-bold text-lg shadow-xl transform hover:scale-105 transition-all disabled:opacity-50"
-                >
-                  {isProcessing ? '⏳ Đang xử lý...' : `🎲 Cược ${BET_AMOUNT_SUI} SUI`}
-                </button>
-                <button
-                  onClick={resetGame}
-                  disabled={isProcessing}
-                  className="bg-gray-500 hover:bg-gray-600 text-white px-8 py-4 rounded-xl font-bold text-lg shadow-xl transform hover:scale-105 transition-all disabled:opacity-50"
-                >
-                  ❌ Hủy
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Processing/Result State */}
-          {(gameStatus === 'revealing' || gameStatus === 'result') && (
-            <div className="text-center">
-              {gameStatus === 'revealing' && (
-                <p className="text-white text-xl animate-pulse">🎰 Đang mở kết quả...</p>
-              )}
-              {gameStatus === 'result' && (
-                <button
-                  onClick={resetGame}
-                  className="bg-purple-500 hover:bg-purple-600 text-white px-8 py-4 rounded-xl font-bold text-lg shadow-xl transform hover:scale-105 transition-all mt-4"
-                >
-                  🔄 Chơi lại
-                </button>
-              )}
-            </div>
-          )}
+          {/* Choice Buttons */}
+          <div className="gap-4 grid grid-cols-3">
+            {(Object.keys(CHOICES) as Choice[]).map((choice) => (
+              <button
+                key={choice}
+                onClick={() => payAndPlay(choice)}
+                disabled={isProcessing || !account || showModal}
+                className={`
+                bg-gradient-to-br from-purple-500 to-pink-500 
+                hover:from-purple-600 hover:to-pink-600
+                disabled:from-gray-300 disabled:to-gray-400
+                text-white rounded-xl p-6 text-6xl
+                transform transition-all duration-200
+                hover:scale-110 active:scale-95
+                disabled:cursor-not-allowed disabled:hover:scale-100
+                shadow-lg hover:shadow-xl
+              `}
+              >
+                {CHOICES[choice]}
+              </button>
+            ))}
+          </div>
         </div>
 
-        {/* Warning */}
-        {!hasEnoughBalance && (
-          <div className="bg-red-500/20 border-2 border-red-400 p-4 rounded-xl text-center">
-            <p className="text-red-300 font-semibold">
-              ⚠️ Số dư không đủ! Cần tối thiểu {BET_AMOUNT_SUI} SUI để chơi.
-            </p>
+        {/* Instructions */}
+        {!account ? (
+          <div className="bg-yellow-100 mt-6 p-4 border border-yellow-300 rounded-lg text-yellow-800 text-center">
+            Please connect your wallet to start playing!
+            <div className="mt-2">
+              <ConnectButton />
+            </div>
+          </div>
+        ) : (
+          <div className="flex justify-between items-center mt-6 p-4 rounded-lg text-white text-center">
+            <ConnectButton />
+            <div className="font-semibold">{balance} GGC</div>
           </div>
         )}
+
+        {/* Score Display */}
+        <div className="gap-4 grid grid-cols-3 p-4">
+          <div className="bg-white bg-opacity-20 p-3 rounded-lg text-center">
+            <div className="font-bold text-2xl">{scores.player}</div>
+            <div className="opacity-90 text-xs">Wins</div>
+          </div>
+          <div className="bg-white bg-opacity-20 p-3 rounded-lg text-center">
+            <div className="font-bold text-2xl">{scores.draws}</div>
+            <div className="opacity-90 text-xs">Draws</div>
+          </div>
+          <div className="bg-white bg-opacity-20 p-3 rounded-lg text-center">
+            <div className="font-bold text-2xl">{scores.bot}</div>
+            <div className="opacity-90 text-xs">Losses</div>
+          </div>
+        </div>
       </div>
+
+      {/* Modal */}
+      {showModal && (
+        <div className="z-50 fixed inset-0 flex justify-center items-center bg-black/50">
+          <div className="bg-white shadow-2xl mx-4 p-8 rounded-2xl w-full max-w-md">
+            <div className="text-center">
+              <div className="mb-4 text-6xl">
+                {result === 'win' ? '🎉' : result === 'lose' ? '😢' : '🤝'}
+              </div>
+              <h3 className="mb-4 font-bold text-gray-800 text-3xl">
+                {result === 'win'
+                  ? 'You Won!'
+                  : result === 'lose'
+                  ? 'You Lost!'
+                  : "It's a Draw!"}
+              </h3>
+              <div className="flex justify-center gap-8 mb-6">
+                <div>
+                  <div className="mb-1 text-gray-600 text-sm">You</div>
+                  <div className="text-5xl">
+                    {playerChoice && CHOICES[playerChoice]}
+                  </div>
+                </div>
+                <div className="flex items-center text-gray-400 text-3xl">
+                  vs
+                </div>
+                <div>
+                  <div className="mb-1 text-gray-600 text-sm">Bot</div>
+                  <div className="text-5xl">
+                    {botChoice && CHOICES[botChoice]}
+                  </div>
+                </div>
+              </div>
+              <p className="mb-6 text-gray-600">
+                {result === 'win'
+                  ? 'Congratulations! You won GGC tokens!'
+                  : result === 'lose'
+                  ? 'Better luck next time!'
+                  : 'No winner this round!'}
+              </p>
+              <button
+                onClick={confirmEndRound}
+                className="bg-gradient-to-r from-purple-500 hover:from-purple-600 to-pink-500 hover:to-pink-600 px-8 py-3 rounded-lg w-full font-bold text-white hover:scale-105 transition-all transform"
+              >
+                Play Again
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

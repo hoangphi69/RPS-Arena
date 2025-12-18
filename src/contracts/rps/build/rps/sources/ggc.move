@@ -86,11 +86,17 @@ public fun get_pool_balance(pool: &Pool): u64 {
 }
 /*
 Package ID: 
-0x4d21dfddf16121831decde8457856f41060d7ec43ee2d6bd2778703535d5e063
+0xaed048371a914964240dac80f59a062a5b8cf591d7ee5a92b55ed217e714489
+Object ID:
+0xa069b707a0c37b7bc9d93f350e31372cfcd4f502e96a1a1091fb8a7939d35fd9
+Coin type: 
+0xaed048371a914964240dac80f59a062a5b8cf591d7ee5a92b55ed217e714489::ggc::GGC
 Pool ID (shared object): 
-0x2e22048c933eb925e9ab03159f34ebd95160eb3634f7f8602937300caa920185
-Treasury Cap:
-0x92b8d0bdd87b2aefecb694dae9e621bf79a176be286294ae1b297f4ec4343b33
+0x904c1552f93b6290f6a62f1b95bafab7072f422a2f71342e1f17a8c389e615f1
+TreasuryCap ID: 
+0x1853eee862ad9daaed2060faba7f1c6faafc4c0753676ad515da67bd2d634f5e
+AdminCap ID: 
+0x86ff03d5026b14363a975ba5273dde0bfbb62c366abe47def8dec4487b9598c8
 Mint coin Player:
-sui client call --package 0x4d21dfddf16121831decde8457856f41060d7ec43ee2d6bd2778703535d5e063 --module ggc --function mint --args 0x92b8d0bdd87b2aefecb694dae9e621bf79a176be286294ae1b297f4ec4343b33 100000000000 0x0 --gas-budget 10000000
+sui client call --package 0xaed048371a914964240dac80f59a062a5b8cf591d7ee5a92b55ed217e714489 --module ggc --function mint --args 0x1853eee862ad9daaed2060faba7f1c6faafc4c0753676ad515da67bd2d634f5e 100000000000 0x7221afae8e779f679c83c83abc9e235ea63fd6d349af14dd1fcb3ba18db5fcc8 --gas-budget 10000000
 */
