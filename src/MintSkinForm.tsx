@@ -1,12 +1,13 @@
 import {
   useSignAndExecuteTransaction,
   useCurrentAccount,
+  useSuiClient,
 } from '@mysten/dapp-kit';
 import { Transaction } from '@mysten/sui/transactions';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
-import { Loader2, Wand2, Link as LinkIcon, Type } from 'lucide-react';
-import { GG_NFT_MODULE } from './constants';
+import { Loader2, Wand2, Link as LinkIcon, Type, Coins } from 'lucide-react';
+import { GGC_MODULE, GG_NFT_MODULE, MIST } from './constants';
 
 const GESTURES = [
   { id: 'Rock', icon: '👊' },
@@ -14,15 +15,19 @@ const GESTURES = [
   { id: 'Scissors', icon: '✌️' },
 ];
 
+const MINT_FEE = 150; // Cost in GGC
+
 export default function MintSkinForm({
   onSuccess,
 }: {
   onSuccess?: () => void;
 }) {
   const account = useCurrentAccount();
+  const client = useSuiClient();
   const { mutate: signAndExecuteTransaction } = useSignAndExecuteTransaction();
 
   const [isLoading, setIsLoading] = useState(false);
+  const [userGGCBalance, setUserGGCBalance] = useState(0);
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -30,14 +35,56 @@ export default function MintSkinForm({
     gesture: 'Rock',
   });
 
+  // Check user's GGC balance for UI feedback
+  useEffect(() => {
+    if (account) {
+      fetchBalance();
+    }
+  }, [account]);
+
+  const fetchBalance = async () => {
+    if (!account) return;
+    try {
+      const { totalBalance } = await client.getBalance({
+        owner: account.address,
+        coinType: `${GGC_MODULE}::GGC`,
+      });
+      setUserGGCBalance(parseInt(totalBalance) / 1_000_000_000);
+    } catch (e) {
+      console.error('Failed to fetch balance', e);
+    }
+  };
+
   const handleMint = async () => {
     if (!account) return toast.error('Connect wallet first');
     if (!formData.name || !formData.imageUrl)
       return toast.error('Name and Image URL are required');
+    if (userGGCBalance < MINT_FEE)
+      return toast.error(`Insufficient GGC. You need ${MINT_FEE} GGC.`);
 
     setIsLoading(true);
     try {
       const tx = new Transaction();
+
+      const { data: coins } = await client.getCoins({
+        owner: account.address,
+        coinType: `${GGC_MODULE}::GGC`,
+      });
+
+      if (!coins || coins.length === 0) throw new Error('No GGC coins found');
+
+      let primaryCoinInput = tx.object(coins[0].coinObjectId);
+      if (coins.length > 1) {
+        tx.mergeCoins(
+          primaryCoinInput,
+          coins.slice(1).map((c) => tx.object(c.coinObjectId))
+        );
+      }
+
+      const [feeCoin] = tx.splitCoins(primaryCoinInput, [
+        tx.pure.u64(MINT_FEE * MIST),
+      ]);
+
       tx.moveCall({
         target: `${GG_NFT_MODULE}::mint_nft`,
         arguments: [
@@ -45,34 +92,39 @@ export default function MintSkinForm({
           tx.pure.string(formData.description),
           tx.pure.string(formData.imageUrl),
           tx.pure.string(formData.gesture),
+          feeCoin,
         ],
       });
 
       signAndExecuteTransaction(
         { transaction: tx },
         {
-          onSuccess: async () => {
-            toast.success(`Minted ${formData.name}!`);
+          onSuccess: () => {
+            toast.success(`Minted successfully! Fee: ${MINT_FEE} GGC`);
             setFormData({
               name: '',
               description: '',
               imageUrl: '',
               gesture: 'Rock',
             });
-            if (onSuccess) {
-              await new Promise((r) => setTimeout(r, 1000));
-              onSuccess();
-            }
+            fetchBalance();
+            if (onSuccess) onSuccess();
           },
-          onError: () => toast.error('Mint failed'),
+          onError: (err) => {
+            console.error(err);
+            toast.error('Mint failed. See console.');
+          },
         }
       );
-    } catch (e) {
-      toast.error('Transaction failed');
+    } catch (e: any) {
+      console.error(e);
+      toast.error(e.message || 'Transaction failed');
     } finally {
       setIsLoading(false);
     }
   };
+
+  const hasEnoughFunds = userGGCBalance >= MINT_FEE;
 
   return (
     <div className="relative bg-gradient-to-br from-gray-900 to-gray-800 shadow-2xl p-8 border border-white/10 rounded-3xl overflow-hidden">
@@ -169,6 +221,15 @@ export default function MintSkinForm({
               />
             </div>
           </div>
+
+          {/* Wallet Balance Info */}
+          <div className="flex justify-end items-center gap-1 text-gray-500 text-xs">
+            <Coins className="w-3 h-3" />
+            Your Balance:{' '}
+            <span className="font-mono font-bold text-emerald-400">
+              {userGGCBalance} GGC
+            </span>
+          </div>
         </div>
 
         <div className="flex flex-col gap-4 md:col-span-5">
@@ -200,11 +261,33 @@ export default function MintSkinForm({
           {/* Create Button */}
           <button
             onClick={handleMint}
-            disabled={isLoading || !account}
-            className="flex justify-center items-center gap-2 bg-emerald-500 hover:bg-emerald-400 disabled:bg-gray-700 shadow-emerald-900/20 shadow-lg py-4 rounded-xl w-full font-bold text-black disabled:text-gray-500 text-lg transition-all"
+            disabled={isLoading || !account || !hasEnoughFunds}
+            className={`
+              w-full py-4 rounded-xl font-bold text-lg flex justify-center items-center gap-2 transition-all shadow-lg
+              ${
+                hasEnoughFunds
+                  ? 'bg-emerald-500 hover:bg-emerald-400 text-black shadow-emerald-900/20'
+                  : 'bg-gray-700 text-gray-500 cursor-not-allowed'
+              }
+            `}
           >
-            {isLoading ? <Loader2 className="animate-spin" /> : 'Create Skin'}
+            {isLoading ? (
+              <Loader2 className="animate-spin" />
+            ) : (
+              <>
+                <span>Create Skin</span>
+                <span className="flex items-center gap-1 bg-yellow-400/80 px-2 py-0.5 rounded font-mono text-sm">
+                  {MINT_FEE} GGC
+                </span>
+              </>
+            )}
           </button>
+
+          {!hasEnoughFunds && account && (
+            <p className="font-bold text-red-400 text-xs text-center">
+              Insufficient Balance: {userGGCBalance} / {MINT_FEE} GGC
+            </p>
+          )}
         </div>
       </div>
     </div>

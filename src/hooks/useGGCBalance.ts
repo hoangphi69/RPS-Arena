@@ -2,10 +2,7 @@
 
 import { useCurrentAccount, useSuiClient } from '@mysten/dapp-kit';
 import { useQuery } from '@tanstack/react-query';
-import { GGC_MODULE } from '../constants';
-
-const GGC_COIN_TYPE = `${GGC_MODULE}::GGC`;
-const MIST_PER_GGC = 1_000_000_000;
+import { GGC_MODULE, MIST } from '../constants';
 
 export const useGGCBalance = () => {
   const client = useSuiClient();
@@ -23,13 +20,13 @@ export const useGGCBalance = () => {
       // Fetch specific Coin Type
       const balanceResult = await client.getBalance({
         owner: account.address,
-        coinType: GGC_COIN_TYPE,
+        coinType: `${GGC_MODULE}::GGC`,
       });
 
       const balanceInMist = BigInt(balanceResult.totalBalance);
 
       // Convert to human-readable format
-      const balanceInGGC = (Number(balanceInMist) / MIST_PER_GGC).toFixed(2);
+      const balanceInGGC = (Number(balanceInMist) / MIST).toFixed(2);
 
       return balanceInGGC;
     },

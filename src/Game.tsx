@@ -12,6 +12,7 @@ import {
   TREASURY_CAP_ID,
   FAUCET_DATA_ID,
   ADMIN_ADDRESS,
+  MIST,
 } from './constants';
 import { useGGCBalance } from './hooks/useGGCBalance';
 import { toast } from 'sonner';
@@ -237,7 +238,6 @@ export default function RockPaperScissorsGame() {
 
     try {
       const tx = new Transaction();
-      const MIST = 1_000_000_000;
       const requiredMist = betAmount * MIST;
 
       const { data: coins } = await client.getCoins({
