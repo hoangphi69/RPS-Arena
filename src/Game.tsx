@@ -5,7 +5,7 @@ import {
   useSuiClient,
 } from '@mysten/dapp-kit';
 import { Transaction } from '@mysten/sui/transactions';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import {
   POOL_DATA_ID,
   MODULE_NAME,
@@ -16,8 +16,30 @@ import {
 import { useGGCBalance } from './hooks/useGGCBalance';
 import { toast } from 'sonner';
 
-type Choice = 'rock' | 'paper' | 'scissors';
+// --- Configuration ---
+const BET_OPTIONS = [10, 20, 50, 100];
+
+// --- Types ---
+type Choice = 'scissors' | 'rock' | 'paper';
 type GameResult = 'win' | 'lose' | 'draw' | null;
+
+const CHOICE_TO_NUMBER: Record<Choice, number> = {
+  scissors: 0,
+  rock: 1,
+  paper: 2,
+};
+
+const NUMBER_TO_CHOICE: Record<number, Choice> = {
+  0: 'scissors',
+  1: 'rock',
+  2: 'paper',
+};
+
+const OUTCOME_MAP: Record<number, GameResult> = {
+  0: 'lose',
+  1: 'win',
+  2: 'draw',
+};
 
 const CHOICES = {
   scissors: '✌️',
@@ -25,9 +47,43 @@ const CHOICES = {
   paper: '✋',
 };
 
+// --- Animation Component ---
+const BalanceDelta = ({ currentBalance }: { currentBalance: number }) => {
+  const [delta, setDelta] = useState<{ val: number; id: number } | null>(null);
+  const prevBalance = useRef(currentBalance);
+
+  useEffect(() => {
+    const diff = currentBalance - prevBalance.current;
+    if (Math.abs(diff) > 0.01) {
+      setDelta({ val: diff, id: Date.now() });
+      const timer = setTimeout(() => setDelta(null), 1500);
+      prevBalance.current = currentBalance;
+      return () => clearTimeout(timer);
+    }
+  }, [currentBalance]);
+
+  if (!delta) return null;
+
+  const isPositive = delta.val > 0;
+  const text = isPositive
+    ? `+${delta.val.toFixed(2)}`
+    : `${delta.val.toFixed(2)}`;
+  const color = isPositive ? 'text-emerald-400' : 'text-red-400';
+
+  return (
+    <span
+      key={delta.id}
+      className={`absolute left-full ml-3 top-0 font-mono text-sm font-bold ${color} animate-float-fade whitespace-nowrap`}
+    >
+      {text}
+    </span>
+  );
+};
+
 export default function RockPaperScissorsGame() {
-  const account = useCurrentAccount()!;
+  const account = useCurrentAccount();
   const client = useSuiClient();
+  const { data: balance, refetch: refetchBalance } = useGGCBalance();
   const { mutate: signAndExecute } = useSignAndExecuteTransaction({
     execute: async ({ bytes, signature }) =>
       await client.executeTransactionBlock({
@@ -40,17 +96,27 @@ export default function RockPaperScissorsGame() {
         },
       }),
   });
-  const { data: balance, refetch: refetchBalance } = useGGCBalance();
-  const [poolBalance, setPoolBalance] = useState<number>(0);
 
+  const [poolBalance, setPoolBalance] = useState<number>(0);
   const [playerChoice, setPlayerChoice] = useState<Choice | null>(null);
   const [botChoice, setBotChoice] = useState<Choice | null>(null);
   const [result, setResult] = useState<GameResult>(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [showModal, setShowModal] = useState(false);
   const [scores, setScores] = useState({ player: 0, bot: 0, draws: 0 });
+  const [betAmount, setBetAmount] = useState<number>(10);
 
-  // Fetch pool balance
+  const currentBalance = parseFloat(balance || '0');
+  const hasEnoughBalance = currentBalance >= betAmount;
+
+  // --- Helpers ---
+  const refreshData = async () => {
+    for (let i = 0; i < 3; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      fetchPoolBalance();
+      refetchBalance();
+    }
+  };
+
   const fetchPoolBalance = async () => {
     try {
       const poolObject = await client.getObject({
@@ -60,14 +126,11 @@ export default function RockPaperScissorsGame() {
 
       if (poolObject.data?.content?.dataType === 'moveObject') {
         const fields = poolObject.data.content.fields as any;
-        const balance = parseInt(fields.balance || '0') / 1_000_000_000;
-        setPoolBalance(balance);
-      } else {
-        setPoolBalance(0);
+        const raw = fields.balance?.value || fields.balance || '0';
+        setPoolBalance(parseInt(raw) / 1_000_000_000);
       }
     } catch (error) {
       console.error('Error fetching pool balance:', error);
-      setPoolBalance(0);
     }
   };
 
@@ -75,129 +138,13 @@ export default function RockPaperScissorsGame() {
     fetchPoolBalance();
   }, [client]);
 
-  const getRandomChoice = (): Choice => {
-    const choices: Choice[] = ['rock', 'paper', 'scissors'];
-    return choices[Math.floor(Math.random() * choices.length)];
-  };
-
-  const determineWinner = (player: Choice, bot: Choice): GameResult => {
-    if (player === bot) return 'draw';
-    if (
-      (player === 'rock' && bot === 'scissors') ||
-      (player === 'paper' && bot === 'rock') ||
-      (player === 'scissors' && bot === 'paper')
-    ) {
-      return 'win';
-    }
-    return 'lose';
-  };
-
-  const payAndPlay = async (choice: Choice) => {
-    if (!account) {
-      alert('Please connect your wallet first!');
-      return;
-    }
-
-    setIsProcessing(true);
-    setPlayerChoice(choice);
-    setBotChoice(null);
-    setResult(null);
-
-    // Step 1: User pays first (payout to house)
-    const tx = new Transaction();
-    tx.moveCall({
-      target: `${PACKAGE_ID}::${MODULE_NAME}::payout`,
-      arguments: [
-        tx.object(POOL_DATA_ID),
-        tx.object(TREASURY_CAP_ID),
-        tx.pure.address(POOL_DATA_ID), // Payment goes to house first
-      ],
-    });
-
-    signAndExecute(
-      { transaction: tx },
-      {
-        onSuccess: async (res) => {
-          console.log('Payment successful', res);
-
-          // Step 2: After payment confirmed, run game logic
-          setTimeout(() => {
-            // Simulate on-chain game logic
-            const bot = getRandomChoice();
-            setBotChoice(bot);
-
-            const gameResult = determineWinner(choice, bot);
-            setResult(gameResult);
-
-            // Update scores
-            setScores((prev) => ({
-              player: prev.player + (gameResult === 'win' ? 1 : 0),
-              bot: prev.bot + (gameResult === 'lose' ? 1 : 0),
-              draws: prev.draws + (gameResult === 'draw' ? 1 : 0),
-            }));
-
-            // Step 3: If player wins, send payout
-            if (gameResult === 'win') {
-              const payoutTx = new Transaction();
-              payoutTx.moveCall({
-                target: `${PACKAGE_ID}::${MODULE_NAME}::payout`,
-                arguments: [
-                  payoutTx.object(POOL_DATA_ID),
-                  payoutTx.object(TREASURY_CAP_ID),
-                  payoutTx.pure.address(account.address),
-                ],
-              });
-
-              signAndExecute(
-                { transaction: payoutTx },
-                {
-                  onSuccess: () => {
-                    console.log('Payout to winner successful');
-                    refetchBalance();
-                  },
-                  onError: (err) => {
-                    console.error('Payout failed', err);
-                  },
-                }
-              );
-            }
-
-            setIsProcessing(false);
-            setShowModal(true);
-            refetchBalance();
-          }, 1500); // Simulate blockchain processing time
-        },
-        onError: (err) => {
-          console.error('Payment failed', err);
-          alert('Payment failed. Please try again.');
-          setIsProcessing(false);
-          setPlayerChoice(null);
-        },
-      }
-    );
-  };
-
-  const confirmEndRound = () => {
-    setShowModal(false);
+  const resetGame = () => {
     setPlayerChoice(null);
     setBotChoice(null);
     setResult(null);
   };
 
-  const getResultColor = () => {
-    if (result === 'win') return 'bg-green-500';
-    if (result === 'lose') return 'bg-red-500';
-    if (result === 'draw') return 'bg-yellow-500';
-    return 'bg-gray-500';
-  };
-
-  const getResultText = () => {
-    if (result === 'win') return 'You Win! 🎉';
-    if (result === 'lose') return 'You Lose 😢';
-    if (result === 'draw') return "It's a Draw! 🤝";
-    if (isProcessing) return 'Processing payment...';
-    return 'Rock, Paper, Scissors?';
-  };
+  // --- Transactions ---
 
   const claimGGC = () => {
     const tx = new Transaction();
@@ -209,16 +156,15 @@ export default function RockPaperScissorsGame() {
         tx.object('0x6'),
       ],
     });
+
     signAndExecute(
       { transaction: tx },
       {
         onSuccess: () => {
-          console.log('GGC claimed successfully');
-          setTimeout(refetchBalance, 1000);
+          toast.success('GGC Claimed!');
+          refreshData();
         },
-        onError: (err) => {
-          console.error('GGC claim failed', err);
-        },
+        onError: (err) => toast.error('Claim Failed: ' + err.message),
       }
     );
   };
@@ -233,220 +179,325 @@ export default function RockPaperScissorsGame() {
       { transaction: tx },
       {
         onSuccess: () => {
-          console.log('Deposit successful');
           setTimeout(refetchBalance, 1000);
+          fetchPoolBalance();
         },
-        onError: (err) => {
-          console.error('Deposit failed', err);
-        },
+        onError: (err) => console.error('Deposit failed', err),
       }
     );
   };
 
-  const play = async (choice: number) => {
-    const tx = new Transaction();
-    const BET_AMOUNT = 10;
-    const MIST = 1_000_000_000;
+  const play = async (choiceKey: string) => {
+    if (!account) return;
 
-    // Lấy tất cả coin GGC của player
-    const { data: coins } = await client.getCoins({
-      owner: account.address,
-      coinType: PACKAGE_ID + '::ggc::GGC',
-    });
-
-    if (coins.length === 0 || parseFloat(balance || '0') < BET_AMOUNT) {
-      toast.error('Không đủ GGC trong ví!');
-      setIsProcessing(false);
+    if (!hasEnoughBalance) {
+      toast.error(`Insufficient Funds! You need ${betAmount} GGC to play.`);
       return;
     }
 
-    // Merge tất cả coin GGC thành 1 coin lớn nếu có nhiều
-    let primaryCoin = coins[0].coinObjectId;
-    if (coins.length > 1) {
-      tx.mergeCoins(
-        primaryCoin,
-        coins.slice(1).map((c) => c.coinObjectId)
-      );
-    }
+    setIsProcessing(true);
+    setPlayerChoice(choiceKey as Choice);
 
-    // Split đúng số lượng bet từ coin GGC
-    const [betCoin] = tx.splitCoins(primaryCoin, [BET_AMOUNT * MIST]);
+    try {
+      const tx = new Transaction();
+      const MIST = 1_000_000_000;
+      const requiredMist = betAmount * MIST;
 
-    tx.moveCall({
-      target: `${PACKAGE_ID}::${MODULE_NAME}::play`,
-      arguments: [
-        tx.object(POOL_DATA_ID),
-        betCoin,
-        tx.pure.u8(choice),
-        tx.object('0x8'), // Random object
-      ],
-    });
-    signAndExecute(
-      { transaction: tx },
-      {
-        onSuccess: (res) => {
-          console.log(res.events);
-          const result = res.events?.find(
-            (e) => e.type === `${PACKAGE_ID}::${MODULE_NAME}::GameResult`
-          );
-          const payload = result?.parsedJson as { outcome: number };
-          toast.success(payload.outcome);
-          setTimeout(refetchBalance, 1000);
-        },
-        onError: (err) => {
-          console.error('Deposit failed', err);
-        },
+      const { data: coins } = await client.getCoins({
+        owner: account.address,
+        coinType: `${PACKAGE_ID}::ggc::GGC`,
+      });
+
+      if (!coins || coins.length === 0) {
+        throw new Error('No GGC coins found in wallet.');
       }
-    );
+
+      let primaryCoinInput = tx.object(coins[0].coinObjectId);
+      if (coins.length > 1) {
+        tx.mergeCoins(
+          primaryCoinInput,
+          coins.slice(1).map((c) => tx.object(c.coinObjectId))
+        );
+      }
+
+      const [betCoin] = tx.splitCoins(primaryCoinInput, [
+        tx.pure.u64(requiredMist),
+      ]);
+
+      tx.moveCall({
+        target: `${PACKAGE_ID}::${MODULE_NAME}::play`,
+        arguments: [
+          tx.object(POOL_DATA_ID),
+          betCoin,
+          tx.pure.u8(CHOICE_TO_NUMBER[choiceKey as Choice]),
+          tx.object('0x8'),
+        ],
+      });
+
+      signAndExecute(
+        { transaction: tx },
+        {
+          onSuccess: (result) => {
+            const event = result.events?.find((e) =>
+              e.type.includes('GameResult')
+            );
+
+            if (event && event.parsedJson) {
+              const data = event.parsedJson as any;
+              const outcome = OUTCOME_MAP[Number(data.outcome)];
+
+              setBotChoice(NUMBER_TO_CHOICE[Number(data.house_choice)]);
+              setResult(outcome);
+
+              setScores((prev) => ({
+                ...prev,
+                player: outcome === 'win' ? prev.player + 1 : prev.player,
+                bot: outcome === 'lose' ? prev.bot + 1 : prev.bot,
+                draws: outcome === 'draw' ? prev.draws + 1 : prev.draws,
+              }));
+
+              refreshData();
+            }
+            setIsProcessing(false);
+          },
+          onError: (err) => {
+            toast.error('Transaction Failed: ' + err.message);
+            setIsProcessing(false);
+            setPlayerChoice(null);
+          },
+        }
+      );
+    } catch (e: any) {
+      toast.error(e.message);
+      setIsProcessing(false);
+      setPlayerChoice(null);
+    }
+  };
+
+  // --- UI Logic ---
+
+  const getResultColor = () => {
+    if (result === 'win') return 'bg-green-600';
+    if (result === 'lose') return 'bg-red-600';
+    if (result === 'draw') return 'bg-yellow-600';
+    return 'bg-gray-800'; // Default Neutral
+  };
+
+  const getHeaderText = () => {
+    if (isProcessing) return 'FIGHTING...';
+    if (result === 'win') return 'VICTORY!';
+    if (result === 'lose') return 'DEFEAT';
+    if (result === 'draw') return 'DRAW';
+    return 'RPS BATTLE';
+  };
+
+  const getSubHeaderText = () => {
+    if (isProcessing) return 'Waiting for blockchain...';
+    if (result === 'win') return `+${betAmount * 2} GGC`;
+    if (result === 'lose') return `-${betAmount} GGC`;
+    if (result === 'draw') return 'Bet Refunded';
+    return 'Select your weapon';
   };
 
   return (
-    <div className="flex justify-center items-center bg-gradient-to-br from-purple-600 to-blue-600 p-4 min-h-screen">
+    <div className="flex justify-center items-center bg-gray-900 p-4 min-h-screen font-sans">
       <div
-        className={`${getResultColor()} shadow-2xl rounded-2xl w-full max-w-2xl relative`}
+        className={`${getResultColor()} shadow-2xl rounded-3xl w-full max-w-xl relative transition-all duration-500 overflow-hidden border border-white/10`}
       >
-        {/* Game Display */}
-        <div className="mb-8 p-8 rounded-xl text-white transition-all duration-300">
-          <div className="flex flex-col gap-8">
-            {/* Bot Side */}
-            {botChoice && (
-              <div className="text-center">
-                <div className="opacity-90 mb-2 font-semibold text-sm">
-                  🤖 Bot
-                </div>
-                <div className="p-8 text-8xl animate-bounce">
-                  {CHOICES[botChoice]}
-                </div>
+        {/* Header / Result Area */}
+        <div className="z-10 relative p-8 text-white text-center">
+          {/* --- HOUSE BALANCE DISPLAY --- */}
+          <div className="top-4 left-0 absolute w-full text-center">
+            <span className="bg-black/40 backdrop-blur-md px-3 py-1 border border-white/5 rounded-full font-mono text-[10px] text-white/40">
+              HOUSE POOL:{' '}
+              <span className="text-white">
+                {poolBalance.toLocaleString()} GGC
+              </span>
+            </span>
+          </div>
+
+          {/* Bet Mode Selector */}
+          {!result && !isProcessing && (
+            <div className="flex justify-center mt-6 mb-6">
+              <div className="flex bg-black/40 backdrop-blur-sm p-1 border border-white/5 rounded-xl">
+                {BET_OPTIONS.map((amount) => (
+                  <button
+                    key={amount}
+                    onClick={() => setBetAmount(amount)}
+                    className={`
+                                px-4 py-2 rounded-lg text-sm font-bold transition-all
+                                ${
+                                  betAmount === amount
+                                    ? 'bg-white text-gray-900 shadow-lg scale-105'
+                                    : 'text-white/50 hover:text-white'
+                                }
+                            `}
+                  >
+                    {amount}
+                  </button>
+                ))}
               </div>
-            )}
+            </div>
+          )}
 
-            <h2 className="font-bold text-2xl text-center">
-              {getResultText()}
+          {/* Main Title */}
+          <div className="flex flex-col justify-center items-center gap-2 mb-8 h-32">
+            <h2 className="drop-shadow-md font-black text-4xl md:text-6xl uppercase tracking-tighter animate-in duration-300 fade-in zoom-in">
+              {getHeaderText()}
             </h2>
+            <p className="font-medium text-white/80 text-xl tracking-wide">
+              {getSubHeaderText()}
+            </p>
+          </div>
 
-            {/* Player Side */}
-            <div className="text-center">
-              <div className="opacity-90 mb-2 font-semibold text-sm">You</div>
-              <div className="p-8 text-8xl">
+          {/* Battle Arena */}
+          <div className="flex justify-between items-center mb-8 px-4 w-full">
+            <div className="flex flex-col items-center w-1/3 transition-all duration-300">
+              <div className="text-7xl">
                 {playerChoice ? CHOICES[playerChoice] : '❓'}
               </div>
+              <span className="bg-white/10 mt-4 px-3 py-1 rounded-full font-bold text-[10px] text-white/60 uppercase tracking-widest">
+                You
+              </span>
             </div>
-          </div>
 
-          {/* Choice Buttons */}
-          <div className="gap-4 grid grid-cols-3">
-            {(Object.keys(CHOICES) as Choice[]).map((choice) => (
-              <button
-                key={choice}
-                onClick={() => play(0)}
-                disabled={isProcessing || !account || showModal}
-                className={`
-                bg-gradient-to-br from-purple-500 to-pink-500 
-                hover:from-purple-600 hover:to-pink-600
-                disabled:from-gray-300 disabled:to-gray-400
-                text-white rounded-xl p-6 text-6xl
-                transform transition-all duration-200
-                hover:scale-110 active:scale-95
-                disabled:cursor-not-allowed disabled:hover:scale-100
-                shadow-lg hover:shadow-xl
-              `}
+            <div className="w-1/3 font-black text-white/20 text-4xl italic">
+              VS
+            </div>
+
+            <div className="flex flex-col items-center w-1/3 transition-all duration-300">
+              <div
+                className={`text-7xl ${isProcessing ? 'animate-bounce' : ''}`}
               >
-                {CHOICES[choice]}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Instructions */}
-        {!account ? (
-          <div className="bg-yellow-100 mt-6 p-4 border border-yellow-300 rounded-lg text-yellow-800 text-center">
-            Please connect your wallet to start playing!
-            <div className="mt-2">
-              <ConnectButton />
+                {botChoice ? CHOICES[botChoice] : '🤖'}
+              </div>
+              <span className="bg-white/10 mt-4 px-3 py-1 rounded-full font-bold text-[10px] text-white/60 uppercase tracking-widest">
+                Bot
+              </span>
             </div>
           </div>
-        ) : (
-          <div className="flex justify-between items-center mt-6 p-4 rounded-lg text-white text-center">
-            <ConnectButton />
-            <div className="space-x-4">
-              <span className="font-semibold">{balance} GGC</span>
-              <button className="p-4 outline" onClick={claimGGC}>
-                Claim GGC
-              </button>
-            </div>
-            <div className="">House balance: {poolBalance} GGC</div>
-            <button className="p-4 outline" onClick={depositToPool}>
-              Bố thí
-            </button>
-          </div>
-        )}
 
-        {/* Score Display */}
-        <div className="gap-4 grid grid-cols-3 p-4">
-          <div className="bg-white bg-opacity-20 p-3 rounded-lg text-center">
-            <div className="font-bold text-2xl">{scores.player}</div>
-            <div className="opacity-90 text-xs">Wins</div>
-          </div>
-          <div className="bg-white bg-opacity-20 p-3 rounded-lg text-center">
-            <div className="font-bold text-2xl">{scores.draws}</div>
-            <div className="opacity-90 text-xs">Draws</div>
-          </div>
-          <div className="bg-white bg-opacity-20 p-3 rounded-lg text-center">
-            <div className="font-bold text-2xl">{scores.bot}</div>
-            <div className="opacity-90 text-xs">Losses</div>
-          </div>
-        </div>
-      </div>
-
-      {/* Modal */}
-      {showModal && (
-        <div className="z-50 fixed inset-0 flex justify-center items-center bg-black/50">
-          <div className="bg-white shadow-2xl mx-4 p-8 rounded-2xl w-full max-w-md">
-            <div className="text-center">
-              <div className="mb-4 text-6xl">
-                {result === 'win' ? '🎉' : result === 'lose' ? '😢' : '🤝'}
-              </div>
-              <h3 className="mb-4 font-bold text-gray-800 text-3xl">
-                {result === 'win'
-                  ? 'You Won!'
-                  : result === 'lose'
-                  ? 'You Lost!'
-                  : "It's a Draw!"}
-              </h3>
-              <div className="flex justify-center gap-8 mb-6">
-                <div>
-                  <div className="mb-1 text-gray-600 text-sm">You</div>
-                  <div className="text-5xl">
-                    {playerChoice && CHOICES[playerChoice]}
-                  </div>
-                </div>
-                <div className="flex items-center text-gray-400 text-3xl">
-                  vs
-                </div>
-                <div>
-                  <div className="mb-1 text-gray-600 text-sm">Bot</div>
-                  <div className="text-5xl">
-                    {botChoice && CHOICES[botChoice]}
-                  </div>
-                </div>
-              </div>
-              <p className="mb-6 text-gray-600">
-                {result === 'win'
-                  ? 'Congratulations! You won GGC tokens!'
-                  : result === 'lose'
-                  ? 'Better luck next time!'
-                  : 'No winner this round!'}
-              </p>
+          {/* Controls */}
+          <div className="mt-8 h-24">
+            {result ? (
               <button
-                onClick={confirmEndRound}
-                className="bg-gradient-to-r from-purple-500 hover:from-purple-600 to-pink-500 hover:to-pink-600 px-8 py-3 rounded-lg w-full font-bold text-white hover:scale-105 transition-all transform"
+                onClick={resetGame}
+                className="slide-in-from-bottom-4 bg-white hover:bg-gray-100 shadow-xl hover:shadow-2xl py-4 rounded-2xl w-full font-black text-gray-900 text-xl uppercase tracking-widest hover:scale-[1.02] active:scale-95 transition-all animate-in transform"
               >
                 Play Again
               </button>
-            </div>
+            ) : (
+              <div className="gap-4 grid grid-cols-3">
+                {(Object.keys(CHOICES) as Choice[]).map((choice) => (
+                  <button
+                    key={choice}
+                    onClick={() => play(choice)}
+                    disabled={isProcessing || !account || !hasEnoughBalance}
+                    className={`
+                        bg-black/20 
+                        rounded-2xl p-4 text-5xl
+                        border-2 border-transparent hover:border-white/20
+                        transition-all duration-200
+                        shadow-lg
+                        hover:bg-black/40 hover:scale-110 active:scale-90
+                        disabled:opacity-50 
+                        disabled:cursor-not-allowed
+                        disabled:transform-none
+                        disabled:hover:scale-100
+                        disabled:active:scale-100
+                        disabled:hover:bg-black/20
+                    `}
+                  >
+                    {CHOICES[choice]}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
+
+          {!hasEnoughBalance && account && !result && (
+            <div className="mt-4 font-bold text-red-300 text-sm animate-pulse">
+              Insufficient Balance! You need {betAmount} GGC.
+            </div>
+          )}
         </div>
-      )}
+
+        {/* Footer Stats */}
+        <div className="bg-black/40 backdrop-blur-md p-6 border-white/5 border-t text-white">
+          {!account ? (
+            <div className="flex flex-col items-center gap-4">
+              <p className="opacity-80 font-medium">Connect wallet to start</p>
+              <ConnectButton />
+            </div>
+          ) : (
+            <div className="flex flex-col gap-4">
+              <div className="flex justify-between items-center">
+                <div className="flex items-center gap-3">
+                  <ConnectButton />
+                  <div className="relative flex flex-col pl-2">
+                    <span className="font-bold text-[10px] text-white/50 uppercase">
+                      Your Balance
+                    </span>
+
+                    <div className="relative">
+                      <span
+                        className={`flex gap-2 items-center
+                                font-mono font-bold transition-colors duration-300
+                                ${
+                                  !hasEnoughBalance
+                                    ? 'text-red-400'
+                                    : 'text-emerald-400'
+                                }
+                            `}
+                      >
+                        {balance ?? '0.00'}
+                        <img
+                          src="coin.png"
+                          className="size-5"
+                          width={18}
+                          height={18}
+                        />
+                      </span>
+
+                      {/* Animation Component */}
+                      <BalanceDelta currentBalance={currentBalance} />
+                    </div>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={claimGGC}
+                    className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg font-bold text-xs transition-colors"
+                  >
+                    + Faucet
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex justify-between pt-4 border-white/10 border-t">
+                <div className="text-center">
+                  <div className="font-bold text-xl">{scores.player}</div>
+                  <div className="text-[10px] text-white/40 uppercase">
+                    Wins
+                  </div>
+                </div>
+                <div className="text-center">
+                  <div className="font-bold text-xl">{scores.draws}</div>
+                  <div className="text-[10px] text-white/40 uppercase">
+                    Draws
+                  </div>
+                </div>
+                <div className="text-center">
+                  <div className="font-bold text-xl">{scores.bot}</div>
+                  <div className="text-[10px] text-white/40 uppercase">
+                    Losses
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

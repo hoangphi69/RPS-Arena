@@ -28,9 +28,9 @@ const MIN_BET: u64 = 10_000_000_000; // 10 GGC
 const MAX_BET: u64 = 1_000_000_000_000; // 1000 GGC
 
 // Choices
-const KEO: u8 = 0;
-const BUA: u8 = 1;
-const BAO: u8 = 2;
+const SCISSORS: u8 = 0;
+const ROCK: u8 = 1;
+const PAPER: u8 = 2;
 
 // Faucet Data
 public struct FaucetData has key {
@@ -153,7 +153,7 @@ public entry fun play(
     r: &Random,
     ctx: &mut TxContext
 ) {
-    assert!(player_choice <= BAO, E_INVALID_BET_AMOUNT);
+    assert!(player_choice <= PAPER, E_INVALID_BET_AMOUNT);
 
     let bet_amount = coin::value(&bet);
     assert!(bet_amount >= MIN_BET && bet_amount <= MAX_BET, E_INVALID_BET_AMOUNT);
@@ -167,9 +167,9 @@ public entry fun play(
     let outcome = if (player_choice == house_choice) {
         2 // Hòa
     } else if (
-        (player_choice == KEO && house_choice == BAO) ||
-        (player_choice == BUA && house_choice == KEO) ||
-        (player_choice == BAO && house_choice == BUA)
+        (player_choice == SCISSORS && house_choice == PAPER) ||
+        (player_choice == ROCK && house_choice == SCISSORS) ||
+        (player_choice == PAPER && house_choice == ROCK)
     ) {
         1 // Thắng
     } else {
@@ -215,17 +215,3 @@ public entry fun mint(
     let minted = coin::mint(cap, amount, ctx);
     transfer::public_transfer(minted, recipient);
 }
-
-/*
-Package ID: 
-0xf1caab60fe49aab709bd076047d988468a556a79123bb774ffb608ac6d146ff4
-Pool ID (shared object PoolData):
-0xe9a96bbedbb2ad0f6e0a7647da00a312b6a2e20a544e2a2d78fba0167cc564ea
-TreasuryCap ID (mint GGC): 
-0xa5f583a7ebe42f6c33f0ac122db6552b47ed02f9f75b88261ae94774fedeb132
-FaucetData ID: 
-0x06a927a9e74b8472ee000347d88ecd377ea613ea03f16ba9c55619cf5f9f47b2
-
-Mint 10,000 GGC to address:
-sui client call --package 0xc7f8c585d839678b1494230f49379ecf7a88414d420d74fee06de5ced0594a42 --module ggc --function mint --args 0xedee3773b2ac3cf94c8903cc165103563569fa1120b12142494ec99343c59ebc 10000000000000 0x401e12050a7055fbede445774f00075233f70ba60c7499a5d712b38b977eea51 --gas-budget 10000000
-*/
