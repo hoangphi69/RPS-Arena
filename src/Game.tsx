@@ -16,6 +16,10 @@ import {
 } from './constants';
 import { useGGCBalance } from './hooks/useGGCBalance';
 import { toast } from 'sonner';
+import { Package } from 'lucide-react';
+import NFTInventory from './NFTInventory';
+import { useNFTSkins } from './hooks/useNFTSkins';
+
 
 // --- Configuration ---
 const BET_OPTIONS = [10, 20, 50, 100];
@@ -111,6 +115,9 @@ export default function RockPaperScissorsGame() {
   const hasEnoughBalance = currentBalance >= betAmount;
 
   const isAdmin = account?.address === ADMIN_ADDRESS;
+
+  const [activeTab, setActiveTab] = useState<'game' | 'inventory'>('game');
+  const { selectedSkins, selectSkin, removeSkin, getSkinForChoice } = useNFTSkins();
 
   // --- Helpers ---
   const refreshData = async () => {
@@ -330,10 +337,53 @@ export default function RockPaperScissorsGame() {
     return 'Select your weapon';
   };
 
+  const renderChoiceDisplay = (choice: Choice | null, isBot: boolean = false) => {
+    if (!choice) return isBot ? '🤖' : '❓';
+    
+    const skin = getSkinForChoice(choice);
+    if (skin && !isBot) {
+      return (
+        <img
+          src={skin.image_url}
+          alt={skin.name}
+          className="w-20 h-20 object-cover rounded-lg border-2 border-white/20"
+        />
+      );
+    }
+    
+    return CHOICES[choice];
+  };
+
   return (
     <div className="flex justify-center items-center bg-gray-900 p-4 min-h-screen font-sans">
-      {/* GRID CONTAINER: Side-by-Side Layout */}
-      <div
+      <div className="w-full max-w-6xl">
+        {/* Tab Navigation */}
+        <div className="flex gap-2 mb-6">
+          <button
+            onClick={() => setActiveTab('game')}
+            className={`flex-1 py-3 rounded-xl font-bold transition-all ${
+              activeTab === 'game'
+                ? 'bg-emerald-600 text-white shadow-lg'
+                : 'bg-gray-800/50 text-gray-400 hover:bg-gray-800'
+            }`}
+          >
+            🎮 Chơi Game
+          </button>
+          <button
+            onClick={() => setActiveTab('inventory')}
+            className={`flex-1 py-3 rounded-xl font-bold transition-all ${
+              activeTab === 'inventory'
+                ? 'bg-emerald-600 text-white shadow-lg'
+                : 'bg-gray-800/50 text-gray-400 hover:bg-gray-800'
+            }`}
+          >
+            <Package className="inline w-5 h-5 mr-2" />
+            Kho NFT
+          </button>
+        </div>
+
+        {activeTab === 'game' ? (
+<div
         className={`grid grid-cols-1 ${
           isAdmin
             ? 'md:grid-cols-[1fr_1.5fr]'
@@ -453,7 +503,7 @@ export default function RockPaperScissorsGame() {
             <div className="flex justify-between items-center mb-8 px-4 w-full">
               <div className="flex flex-col items-center w-1/3 transition-all duration-300">
                 <div className="text-7xl">
-                  {playerChoice ? CHOICES[playerChoice] : '❓'}
+                  {renderChoiceDisplay(playerChoice, false)}
                 </div>
                 <span className="bg-white/10 mt-4 px-3 py-1 rounded-full font-bold text-[10px] text-white/60 uppercase tracking-widest">
                   You
@@ -598,6 +648,17 @@ export default function RockPaperScissorsGame() {
           </div>
         </div>
       </div>
+        ): (
+          <NFTInventory
+            selectedSkins={selectedSkins}
+            onSelectSkin={selectSkin}
+            onRemoveSkin={removeSkin}
+          />
+        )}
+
+      </div>
+      {/* GRID CONTAINER: Side-by-Side Layout */}
+      
     </div>
   );
 }
