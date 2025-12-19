@@ -319,7 +319,7 @@ export default function RockPaperScissorsGame() {
     if (result === 'win') return 'VICTORY!';
     if (result === 'lose') return 'DEFEAT';
     if (result === 'draw') return 'DRAW';
-    return 'RPS BATTLE';
+    return 'RPS Arena';
   };
 
   const getSubHeaderText = () => {
