@@ -1,4 +1,4 @@
-module ggc::ggc;
+module rps::ggc;
 
 use sui::coin::{Self, Coin, TreasuryCap};
 use sui::balance::{Self, Balance};
@@ -123,7 +123,6 @@ public entry fun claim_faucet(
     assert!(claim_record.daily_count < FAUCET_MAX_PER_DAY, 1001); // Max 5
     assert!(now_ms - claim_record.last_claim_timestamp >= FAUCET_MIN_INTERVAL_MS, 1002); // 2 mins
 
-    // --- 4. Withdraw Logic (CHANGED) ---
     // Ensure faucet has enough funds
     assert!(balance::value(&faucet.balance) >= FAUCET_AMOUNT, 1003);
 
