@@ -10,7 +10,7 @@ use sui::url;
 use sui::coin::{Self, Coin};
 use rps::ggc::GGC;
 
-const ADMIN: address = @0xe4b2d21e687c91f6efbbca58a2be1680d9486bccd4ed892f1b2040ba4cc38a89; 
+const ADMIN: address = @0xf213f26def1543419259b7e10776786b700311e28b7e35e6ad6567ac0027db37; 
 const MINT_FEE: u64 = 150_000_000_000; 
 
 // --- Error Constants ---
